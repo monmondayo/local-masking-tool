@@ -88,6 +88,7 @@ class LocalMaskingHandler(SimpleHTTPRequestHandler):
                 return
 
             payload = json.loads(result.stdout)
+            payload["provider"] = "local-macos-vision"
             self.send_json(HTTPStatus.OK, payload)
         except Exception as error:
             self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(error)})
@@ -110,8 +111,9 @@ class LocalMaskingHandler(SimpleHTTPRequestHandler):
 def main() -> None:
     os.chdir(ROOT)
     port = int(os.environ.get("PORT", "5173"))
-    server = ThreadingHTTPServer(("127.0.0.1", port), LocalMaskingHandler)
-    print(f"Serving on http://127.0.0.1:{port}")
+    host = os.environ.get("HOST", "127.0.0.1")
+    server = ThreadingHTTPServer((host, port), LocalMaskingHandler)
+    print(f"Serving on http://{host}:{port}")
     server.serve_forever()
 
 

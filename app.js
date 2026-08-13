@@ -49,6 +49,18 @@ const TYPE_MIN_SIZE = {
   plate: 30,
 };
 
+const MEDIAPIPE_WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm";
+const MEDIAPIPE_MODULE_URL =
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.mjs";
+const MEDIAPIPE_FACE_MODEL_URL =
+  "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_full_range/float16/1/blaze_face_full_range.tflite";
+const FACE_TILE_SIZE = 1000;
+const FACE_TILE_OVERLAP = 0.28;
+const FACE_TILE_MAX_SIDE = 1536;
+const FACE_TILE_LIMIT = 80;
+
+let mediaPipeDetectorPromise = null;
+
 function setStatus(message) {
   els.runtimeStatus.textContent = message;
 }
@@ -345,7 +357,14 @@ async function detectFaces() {
   setStatus("顔を検知中...");
   let faces = null;
 
-  if (canUseLocalApi()) {
+  try {
+    faces = await detectFacesWithMediaPipe();
+    setStatus(`ブラウザAI顔検知: ${faces.length}件`);
+  } catch (error) {
+    console.warn("MediaPipe face detection failed. Falling back.", error);
+  }
+
+  if (!faces && canUseLocalApi()) {
     try {
       faces = await detectFacesWithLocalServer();
       setStatus(`ローカル顔検知: ${faces.length}件`);
@@ -368,7 +387,7 @@ async function detectFaces() {
     setStatus(
       canUseLocalApi()
         ? "顔検知には server.py での起動が必要です"
-        : "クラウド版の顔検知はブラウザ対応が必要です。手動追加で補正してください",
+        : "ブラウザ内AIモデルを読み込めませんでした。手動追加で補正してください",
     );
     return;
   }
@@ -390,6 +409,121 @@ async function detectFaces() {
       ),
     );
   }
+}
+
+async function loadMediaPipeFaceDetector() {
+  if (!mediaPipeDetectorPromise) {
+    setStatus("顔検知モデルを読み込み中...");
+    mediaPipeDetectorPromise = import(MEDIAPIPE_MODULE_URL).then(
+      async ({ FaceDetector, FilesetResolver }) => {
+        const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_URL);
+        return FaceDetector.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: MEDIAPIPE_FACE_MODEL_URL,
+          },
+          runningMode: "IMAGE",
+          minDetectionConfidence: 0.35,
+          minSuppressionThreshold: 0.3,
+        });
+      },
+    );
+  }
+  return mediaPipeDetectorPromise;
+}
+
+async function detectFacesWithMediaPipe() {
+  const detector = await loadMediaPipeFaceDetector();
+  const tiles = buildFaceDetectionTiles(els.imageCanvas.width, els.imageCanvas.height);
+  const candidates = [];
+
+  for (const tile of tiles) {
+    const canvas = document.createElement("canvas");
+    const scale = Math.min(2, Math.max(1, FACE_TILE_MAX_SIDE / Math.max(tile.w, tile.h)));
+    canvas.width = Math.round(tile.w * scale);
+    canvas.height = Math.round(tile.h * scale);
+    const tileCtx = canvas.getContext("2d");
+    tileCtx.drawImage(
+      state.image,
+      tile.x,
+      tile.y,
+      tile.w,
+      tile.h,
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+    );
+
+    const result = detector.detect(canvas);
+    for (const detection of result.detections || []) {
+      const rect = normalizeMediaPipeDetection(detection);
+      if (!rect) continue;
+      candidates.push({
+        x: tile.x + rect.x / scale,
+        y: tile.y + rect.y / scale,
+        w: rect.w / scale,
+        h: rect.h / scale,
+        score: rect.score,
+        confidence: rect.score,
+      });
+    }
+  }
+
+  return nonMaxSuppress(candidates, 0.28)
+    .sort((a, b) => b.score - a.score)
+    .map(({ x, y, w, h, confidence }) => ({ x, y, w, h, confidence }));
+}
+
+function buildFaceDetectionTiles(width, height) {
+  if (width <= FACE_TILE_SIZE && height <= FACE_TILE_SIZE) {
+    return [{ x: 0, y: 0, w: width, h: height }];
+  }
+
+  const step = Math.max(240, Math.round(FACE_TILE_SIZE * (1 - FACE_TILE_OVERLAP)));
+  const xs = axisStarts(width, FACE_TILE_SIZE, step);
+  const ys = axisStarts(height, FACE_TILE_SIZE, step);
+  const tiles = [];
+
+  for (const y of ys) {
+    for (const x of xs) {
+      tiles.push({
+        x,
+        y,
+        w: Math.min(FACE_TILE_SIZE, width - x),
+        h: Math.min(FACE_TILE_SIZE, height - y),
+      });
+    }
+  }
+
+  if (tiles.length > FACE_TILE_LIMIT) {
+    throw new Error(`画像が大きすぎます。顔検知タイル数: ${tiles.length}`);
+  }
+
+  return tiles;
+}
+
+function axisStarts(length, tileSize, step) {
+  if (length <= tileSize) return [0];
+  const starts = [];
+  for (let value = 0; value <= length - tileSize; value += step) {
+    starts.push(value);
+  }
+  const finalStart = length - tileSize;
+  if (starts[starts.length - 1] !== finalStart) starts.push(finalStart);
+  return starts;
+}
+
+function normalizeMediaPipeDetection(detection) {
+  const box = detection.boundingBox;
+  if (!box) return null;
+  const x = box.originX ?? box.xMin ?? box.x ?? box.left;
+  const y = box.originY ?? box.yMin ?? box.y ?? box.top;
+  const w = box.width ?? (box.xMax != null && x != null ? box.xMax - x : null);
+  const h = box.height ?? (box.yMax != null && y != null ? box.yMax - y : null);
+  const score = detection.categories?.[0]?.score ?? detection.score?.[0] ?? 1;
+
+  if ([x, y, w, h].some((value) => !Number.isFinite(value))) return null;
+  return { x, y, w, h, score };
 }
 
 async function detectFacesWithLocalServer() {
