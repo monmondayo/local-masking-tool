@@ -11,6 +11,7 @@ const els = {
   addFaceButton: document.getElementById("addFaceButton"),
   addPlateButton: document.getElementById("addPlateButton"),
   deleteButton: document.getElementById("deleteButton"),
+  shapeInputs: Array.from(document.querySelectorAll('input[name="maskShape"]')),
   blurInput: document.getElementById("blurInput"),
   blurValue: document.getElementById("blurValue"),
   exportFormatInput: document.getElementById("exportFormatInput"),
@@ -39,6 +40,7 @@ const state = {
   sourceType: "",
   regions: [],
   selectedId: null,
+  shape: "rectangle",
   blur: Number(els.blurInput.value),
   exportFormat: els.exportFormatInput.value,
   exportQuality: Number(els.exportQualityInput.value) / 100,
@@ -49,6 +51,11 @@ const state = {
 const TYPE_LABELS = {
   face: "顔",
   plate: "ナンバー",
+};
+
+const SHAPE_LABELS = {
+  rectangle: "矩形",
+  circle: "円形",
 };
 
 const TYPE_MIN_SIZE = {
@@ -87,6 +94,10 @@ function setSelectedId(id) {
   state.selectedId = id;
   const item = getActiveImageItem();
   if (item) item.selectedId = id;
+}
+
+function updateShapeControls() {
+  for (const input of els.shapeInputs) input.checked = input.value === state.shape;
 }
 
 function updateButtons() {
@@ -128,6 +139,16 @@ function clamp(value, min, max) {
 
 function clampRegion(region) {
   const minSize = TYPE_MIN_SIZE[region.type] || 30;
+  if (region.shape === "circle") {
+    const centerX = region.x + region.w / 2;
+    const centerY = region.y + region.h / 2;
+    const maxSize = Math.min(els.imageCanvas.width, els.imageCanvas.height);
+    const size = clamp(Math.max(region.w, region.h), minSize, maxSize);
+    region.x = centerX - size / 2;
+    region.y = centerY - size / 2;
+    region.w = size;
+    region.h = size;
+  }
   region.w = clamp(region.w, minSize, els.imageCanvas.width);
   region.h = clamp(region.h, minSize, els.imageCanvas.height);
   region.x = clamp(region.x, 0, els.imageCanvas.width - region.w);
@@ -139,6 +160,7 @@ function createRegion(type, rect) {
   const region = clampRegion({
     id: nextId(type),
     type,
+    shape: state.shape,
     x: Math.round(rect.x),
     y: Math.round(rect.y),
     w: Math.round(rect.w),
@@ -168,9 +190,36 @@ function addManualRegion(type) {
 
 function selectRegion(id) {
   setSelectedId(id);
+  const region = state.regions.find((item) => item.id === id);
+  if (region) state.shape = region.shape || "rectangle";
+  updateShapeControls();
   renderOverlay();
   renderRegionList();
   updateButtons();
+}
+
+function setMaskShape(shape) {
+  if (!SHAPE_LABELS[shape]) return;
+  state.shape = shape;
+  const region = state.regions.find((item) => item.id === state.selectedId);
+
+  if (region && region.shape !== shape) {
+    const centerX = region.x + region.w / 2;
+    const centerY = region.y + region.h / 2;
+    region.shape = shape;
+    if (shape === "circle") {
+      const size = Math.max(region.w, region.h);
+      region.x = centerX - size / 2;
+      region.y = centerY - size / 2;
+      region.w = size;
+      region.h = size;
+    }
+    clampRegion(region);
+    renderAll();
+    setStatus(`${TYPE_LABELS[region.type]}を${SHAPE_LABELS[shape]}に変更しました`);
+  }
+
+  updateShapeControls();
 }
 
 function deleteSelectedRegion() {
@@ -178,6 +227,9 @@ function deleteSelectedRegion() {
   const index = state.regions.findIndex((region) => region.id === state.selectedId);
   if (index >= 0) state.regions.splice(index, 1);
   setSelectedId(state.regions[0]?.id || null);
+  const nextRegion = state.regions.find((region) => region.id === state.selectedId);
+  if (nextRegion) state.shape = nextRegion.shape || "rectangle";
+  updateShapeControls();
   renderAll();
   setStatus("対象を削除しました");
 }
@@ -231,6 +283,9 @@ function activateImage(id, statusPrefix = "") {
   state.sourceType = item.sourceType;
   state.regions = item.regions;
   state.selectedId = item.selectedId;
+  const selectedRegion = state.regions.find((region) => region.id === state.selectedId);
+  if (selectedRegion) state.shape = selectedRegion.shape || "rectangle";
+  updateShapeControls();
 
   els.exportFormatInput.value = item.exportFormat;
   els.exportQualityInput.value = Math.round(item.exportQuality * 100);
@@ -374,7 +429,17 @@ function drawImageWithBlur(targetContext, preview, backgroundColor = null) {
   for (const region of state.regions) {
     targetContext.save();
     targetContext.beginPath();
-    targetContext.rect(region.x, region.y, region.w, region.h);
+    if (region.shape === "circle") {
+      targetContext.arc(
+        region.x + region.w / 2,
+        region.y + region.h / 2,
+        region.w / 2,
+        0,
+        Math.PI * 2,
+      );
+    } else {
+      targetContext.rect(region.x, region.y, region.w, region.h);
+    }
     targetContext.clip();
     targetContext.filter = `blur(${state.blur}px)`;
     targetContext.drawImage(state.image, 0, 0, width, height);
@@ -405,7 +470,7 @@ function renderOverlay() {
 
   for (const region of state.regions) {
     const box = document.createElement("div");
-    box.className = `mask-box ${region.type}`;
+    box.className = `mask-box ${region.type} ${region.shape || "rectangle"}`;
     if (region.id === state.selectedId) box.classList.add("selected");
     box.dataset.id = region.id;
     box.style.left = `${region.x * scale.x}px`;
@@ -485,7 +550,7 @@ function renderRegionList() {
     swatch.className = `region-color ${region.type}`;
 
     const name = document.createElement("strong");
-    name.textContent = TYPE_LABELS[region.type];
+    name.textContent = `${TYPE_LABELS[region.type]}・${SHAPE_LABELS[region.shape || "rectangle"]}`;
 
     const size = document.createElement("span");
     size.textContent = `${Math.round(region.w)} x ${Math.round(region.h)}`;
@@ -544,6 +609,11 @@ function continueDrag(event) {
   if (state.drag.mode === "move") {
     region.x = state.drag.startRegion.x + dx;
     region.y = state.drag.startRegion.y + dy;
+  } else if (region.shape === "circle") {
+    const delta = Math.abs(dx) >= Math.abs(dy) ? dx : dy;
+    const size = state.drag.startRegion.w + delta;
+    region.w = size;
+    region.h = size;
   } else {
     region.w = state.drag.startRegion.w + dx;
     region.h = state.drag.startRegion.h + dy;
@@ -1036,6 +1106,12 @@ els.deleteButton.addEventListener("click", deleteSelectedRegion);
 els.exportButton.addEventListener("click", exportImage);
 els.exportFormatInput.addEventListener("change", updateExportControls);
 
+for (const input of els.shapeInputs) {
+  input.addEventListener("change", () => {
+    if (input.checked) setMaskShape(input.value);
+  });
+}
+
 els.blurInput.addEventListener("input", () => {
   state.blur = Number(els.blurInput.value);
   els.blurValue.textContent = state.blur;
@@ -1058,4 +1134,5 @@ document.addEventListener("keydown", (event) => {
 });
 
 updateExportControls();
+updateShapeControls();
 updateButtons();

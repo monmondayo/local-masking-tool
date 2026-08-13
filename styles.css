@@ -199,6 +199,47 @@ button.danger:disabled,
   grid-template-columns: auto minmax(0, 1fr);
 }
 
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #e9edf1;
+}
+
+.segmented-control label {
+  position: relative;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.segmented-control input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segmented-control span {
+  display: grid;
+  place-items: center;
+  min-height: 32px;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.segmented-control input:checked + span {
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(23, 32, 38, 0.14);
+}
+
+.segmented-control input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .range-row output {
   color: var(--ink);
   text-align: right;
@@ -473,6 +514,10 @@ button.compact {
 .mask-box.plate {
   border-color: var(--plate);
   background: rgba(194, 65, 12, 0.09);
+}
+
+.mask-box.circle {
+  border-radius: 50%;
 }
 
 .mask-box.selected {

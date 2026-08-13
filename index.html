@@ -50,10 +50,24 @@
           </div>
 
           <div class="control-group">
+            <h2>形状</h2>
+            <div class="segmented-control" role="group" aria-label="ぼかし形状">
+              <label>
+                <input type="radio" name="maskShape" value="rectangle" checked />
+                <span>矩形</span>
+              </label>
+              <label>
+                <input type="radio" name="maskShape" value="circle" />
+                <span>円形</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="control-group">
             <h2>ぼかし</h2>
             <label class="range-row">
               <span>強さ</span>
-              <input id="blurInput" type="range" min="4" max="48" value="18" />
+              <input id="blurInput" type="range" min="4" max="200" value="18" />
               <output id="blurValue">18</output>
             </label>
             <label class="toggle-row">
