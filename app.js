@@ -10,6 +10,7 @@ const els = {
   detectPlatesButton: document.getElementById("detectPlatesButton"),
   addFaceButton: document.getElementById("addFaceButton"),
   addPlateButton: document.getElementById("addPlateButton"),
+  applyShapeToAllButton: document.getElementById("applyShapeToAllButton"),
   deleteButton: document.getElementById("deleteButton"),
   shapeInputs: Array.from(document.querySelectorAll('input[name="maskShape"]')),
   blurInput: document.getElementById("blurInput"),
@@ -46,6 +47,8 @@ const state = {
   exportQuality: Number(els.exportQualityInput.value) / 100,
   preview: els.previewToggle.checked,
   drag: null,
+  manualType: null,
+  manualDraw: null,
 };
 
 const TYPE_LABELS = {
@@ -107,6 +110,11 @@ function updateButtons() {
   els.detectPlatesButton.disabled = !loaded;
   els.addFaceButton.disabled = !loaded;
   els.addPlateButton.disabled = !loaded;
+  els.addFaceButton.classList.toggle("active", state.manualType === "face");
+  els.addPlateButton.classList.toggle("active", state.manualType === "plate");
+  els.addFaceButton.setAttribute("aria-pressed", String(state.manualType === "face"));
+  els.addPlateButton.setAttribute("aria-pressed", String(state.manualType === "plate"));
+  els.applyShapeToAllButton.disabled = state.regions.length === 0;
   els.deleteButton.disabled = !state.selectedId;
   els.clearImageButton.disabled = !loaded;
   els.clearAllButton.disabled = state.images.length === 0;
@@ -173,19 +181,17 @@ function createRegion(type, rect) {
   return region;
 }
 
-function addManualRegion(type) {
-  const width = els.imageCanvas.width;
-  const height = els.imageCanvas.height;
-  const regionWidth = type === "plate" ? width * 0.24 : width * 0.16;
-  const regionHeight = type === "plate" ? regionWidth * 0.32 : regionWidth * 1.1;
-
-  createRegion(type, {
-    x: (width - regionWidth) / 2,
-    y: (height - regionHeight) / 2,
-    w: regionWidth,
-    h: regionHeight,
-  });
-  setStatus(`${TYPE_LABELS[type]}を追加しました`);
+function setManualDrawMode(type) {
+  state.manualType = state.manualType === type ? null : type;
+  state.manualDraw = null;
+  els.stage.classList.toggle("draw-mode", Boolean(state.manualType));
+  renderOverlay();
+  updateButtons();
+  setStatus(
+    state.manualType
+      ? `画像上をドラッグして${TYPE_LABELS[state.manualType]}範囲を追加してください`
+      : "手動追加を終了しました",
+  );
 }
 
 function selectRegion(id) {
@@ -198,12 +204,8 @@ function selectRegion(id) {
   updateButtons();
 }
 
-function setMaskShape(shape) {
-  if (!SHAPE_LABELS[shape]) return;
-  state.shape = shape;
-  const region = state.regions.find((item) => item.id === state.selectedId);
-
-  if (region && region.shape !== shape) {
+function applyShapeToRegion(region, shape) {
+  if (region.shape !== shape) {
     const centerX = region.x + region.w / 2;
     const centerY = region.y + region.h / 2;
     region.shape = shape;
@@ -215,11 +217,28 @@ function setMaskShape(shape) {
       region.h = size;
     }
     clampRegion(region);
+  }
+}
+
+function setMaskShape(shape) {
+  if (!SHAPE_LABELS[shape]) return;
+  state.shape = shape;
+  const region = state.regions.find((item) => item.id === state.selectedId);
+
+  if (region && region.shape !== shape) {
+    applyShapeToRegion(region, shape);
     renderAll();
     setStatus(`${TYPE_LABELS[region.type]}を${SHAPE_LABELS[shape]}に変更しました`);
   }
 
   updateShapeControls();
+}
+
+function applyShapeToAllRegions() {
+  if (!state.regions.length) return;
+  for (const region of state.regions) applyShapeToRegion(region, state.shape);
+  renderAll();
+  setStatus(`${state.regions.length}件を${SHAPE_LABELS[state.shape]}に変更しました`);
 }
 
 function deleteSelectedRegion() {
@@ -276,6 +295,7 @@ function activateImage(id, statusPrefix = "") {
   const item = state.images.find((candidate) => candidate.id === id);
   if (!item) return;
   stopDrag();
+  state.manualDraw = null;
 
   state.activeImageId = item.id;
   state.image = item.image;
@@ -302,6 +322,9 @@ function activateImage(id, statusPrefix = "") {
 
 function resetActiveImage() {
   stopDrag();
+  state.manualType = null;
+  state.manualDraw = null;
+  els.stage.classList.remove("draw-mode");
   state.activeImageId = null;
   state.image = null;
   state.sourceName = "image";
@@ -492,6 +515,17 @@ function renderOverlay() {
     fragment.appendChild(box);
   }
 
+  if (state.manualDraw) {
+    const rect = normalizeDrawRect(state.manualDraw.start, state.manualDraw.current);
+    const preview = document.createElement("div");
+    preview.className = `drawing-mask ${state.manualDraw.type} ${state.shape}`;
+    preview.style.left = `${rect.x * scale.x}px`;
+    preview.style.top = `${rect.y * scale.y}px`;
+    preview.style.width = `${rect.w * scale.x}px`;
+    preview.style.height = `${rect.h * scale.y}px`;
+    fragment.appendChild(preview);
+  }
+
   els.overlay.appendChild(fragment);
 }
 
@@ -572,9 +606,74 @@ function renderAll() {
 function getPointerImagePosition(event) {
   const rect = els.imageCanvas.getBoundingClientRect();
   return {
-    x: ((event.clientX - rect.left) / rect.width) * els.imageCanvas.width,
-    y: ((event.clientY - rect.top) / rect.height) * els.imageCanvas.height,
+    x: clamp(
+      ((event.clientX - rect.left) / rect.width) * els.imageCanvas.width,
+      0,
+      els.imageCanvas.width,
+    ),
+    y: clamp(
+      ((event.clientY - rect.top) / rect.height) * els.imageCanvas.height,
+      0,
+      els.imageCanvas.height,
+    ),
   };
+}
+
+function normalizeDrawRect(start, current) {
+  let x = Math.min(start.x, current.x);
+  let y = Math.min(start.y, current.y);
+  let w = Math.abs(current.x - start.x);
+  let h = Math.abs(current.y - start.y);
+
+  if (state.shape === "circle") {
+    const availableX = current.x < start.x ? start.x : els.imageCanvas.width - start.x;
+    const availableY = current.y < start.y ? start.y : els.imageCanvas.height - start.y;
+    const size = Math.min(Math.max(w, h), availableX, availableY);
+    x = current.x < start.x ? start.x - size : start.x;
+    y = current.y < start.y ? start.y - size : start.y;
+    w = size;
+    h = size;
+  }
+
+  return { x, y, w, h };
+}
+
+function startManualDraw(event) {
+  if (!state.manualType || event.button !== 0 || event.target.closest?.(".mask-box")) return;
+  event.preventDefault();
+  const pointer = getPointerImagePosition(event);
+  state.manualDraw = {
+    type: state.manualType,
+    start: pointer,
+    current: pointer,
+  };
+  renderOverlay();
+  document.addEventListener("pointermove", continueManualDraw);
+  document.addEventListener("pointerup", stopManualDraw, { once: true });
+}
+
+function continueManualDraw(event) {
+  if (!state.manualDraw) return;
+  state.manualDraw.current = getPointerImagePosition(event);
+  renderOverlay();
+}
+
+function stopManualDraw() {
+  document.removeEventListener("pointermove", continueManualDraw);
+  if (!state.manualDraw) return;
+
+  const { type, start, current } = state.manualDraw;
+  const rect = normalizeDrawRect(start, current);
+  state.manualDraw = null;
+
+  if (Math.max(rect.w, rect.h) < 6) {
+    renderOverlay();
+    setStatus("ドラッグして範囲を指定してください");
+    return;
+  }
+
+  createRegion(type, rect);
+  setStatus(`${TYPE_LABELS[type]}の${SHAPE_LABELS[state.shape]}マスクを追加しました`);
 }
 
 function startDrag(event) {
@@ -583,6 +682,7 @@ function startDrag(event) {
   if (!region) return;
 
   event.preventDefault();
+  event.stopPropagation();
   selectRegion(region.id);
 
   const pointer = getPointerImagePosition(event);
@@ -1100,8 +1200,10 @@ window.addEventListener("beforeunload", () => {
 
 els.detectFacesButton.addEventListener("click", detectFaces);
 els.detectPlatesButton.addEventListener("click", detectPlateCandidates);
-els.addFaceButton.addEventListener("click", () => addManualRegion("face"));
-els.addPlateButton.addEventListener("click", () => addManualRegion("plate"));
+els.addFaceButton.addEventListener("click", () => setManualDrawMode("face"));
+els.addPlateButton.addEventListener("click", () => setManualDrawMode("plate"));
+els.applyShapeToAllButton.addEventListener("click", applyShapeToAllRegions);
+els.stage.addEventListener("pointerdown", startManualDraw);
 els.deleteButton.addEventListener("click", deleteSelectedRegion);
 els.exportButton.addEventListener("click", exportImage);
 els.exportFormatInput.addEventListener("change", updateExportControls);
@@ -1127,6 +1229,10 @@ els.previewToggle.addEventListener("change", () => {
 
 window.addEventListener("resize", renderOverlay);
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && state.manualType) {
+    setManualDrawMode(state.manualType);
+    return;
+  }
   if (event.key === "Delete" || event.key === "Backspace") {
     const tagName = document.activeElement?.tagName;
     if (tagName !== "INPUT" && tagName !== "TEXTAREA") deleteSelectedRegion();

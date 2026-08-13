@@ -81,6 +81,12 @@ button.primary:hover:not(:disabled),
   background: var(--accent-strong);
 }
 
+button.active {
+  border-color: var(--accent);
+  color: #ffffff;
+  background: var(--accent);
+}
+
 button.danger {
   color: var(--danger);
 }
@@ -488,6 +494,11 @@ button.compact {
   background: #dfe5ea;
 }
 
+.stage.draw-mode,
+.stage.draw-mode #imageCanvas {
+  cursor: crosshair;
+}
+
 #imageCanvas {
   display: block;
   max-width: 100%;
@@ -517,6 +528,22 @@ button.compact {
 }
 
 .mask-box.circle {
+  border-radius: 50%;
+}
+
+.drawing-mask {
+  position: absolute;
+  border: 2px dashed var(--face);
+  background: rgba(22, 119, 255, 0.13);
+  pointer-events: none;
+}
+
+.drawing-mask.plate {
+  border-color: var(--plate);
+  background: rgba(194, 65, 12, 0.14);
+}
+
+.drawing-mask.circle {
   border-radius: 50%;
 }
 
