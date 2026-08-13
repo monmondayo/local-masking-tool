@@ -130,6 +130,11 @@ button.danger:disabled,
   gap: 10px;
 }
 
+.topbar-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .file-button {
   display: inline-flex;
   align-items: center;
@@ -202,6 +207,118 @@ button.danger:disabled,
 
 .region-panel {
   min-height: 0;
+}
+
+.image-panel {
+  min-height: 0;
+}
+
+.image-panel h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.image-panel output {
+  min-width: 22px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: #e9edf1;
+  font-size: 11px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+button.compact {
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.image-list {
+  display: grid;
+  gap: 7px;
+  max-height: 210px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.image-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.image-list li.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.12);
+}
+
+.image-select {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.image-select:hover:not(:disabled) {
+  border-color: transparent;
+  background: #f4f7f8;
+}
+
+.image-select img {
+  width: 42px;
+  height: 38px;
+  border-radius: 4px;
+  object-fit: cover;
+  background: #e4e9ed;
+}
+
+.image-details {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.image-details strong,
+.image-details span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.image-details strong {
+  font-size: 12px;
+}
+
+.image-details span {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.image-remove {
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  font-size: 20px;
+  line-height: 1;
 }
 
 .region-header {
@@ -294,6 +411,11 @@ button.danger:disabled,
   border-radius: 8px;
   color: var(--muted);
   background: rgba(255, 255, 255, 0.62);
+}
+
+.empty-state[hidden],
+.stage[hidden] {
+  display: none;
 }
 
 .empty-state span {

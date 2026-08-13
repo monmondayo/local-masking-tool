@@ -2,6 +2,8 @@
 
 const els = {
   fileInput: document.getElementById("fileInput"),
+  clearImageButton: document.getElementById("clearImageButton"),
+  clearAllButton: document.getElementById("clearAllButton"),
   exportButton: document.getElementById("exportButton"),
   runtimeStatus: document.getElementById("runtimeStatus"),
   detectFacesButton: document.getElementById("detectFacesButton"),
@@ -16,6 +18,8 @@ const els = {
   exportQualityValue: document.getElementById("exportQualityValue"),
   qualityRow: document.getElementById("qualityRow"),
   previewToggle: document.getElementById("previewToggle"),
+  imageCount: document.getElementById("imageCount"),
+  imageList: document.getElementById("imageList"),
   regionList: document.getElementById("regionList"),
   stagePanel: document.getElementById("stagePanel"),
   emptyState: document.getElementById("emptyState"),
@@ -28,8 +32,9 @@ const els = {
 const ctx = els.imageCanvas.getContext("2d", { willReadFrequently: true });
 
 const state = {
+  images: [],
+  activeImageId: null,
   image: null,
-  objectUrl: null,
   sourceName: "image",
   sourceType: "",
   regions: [],
@@ -60,9 +65,11 @@ const FACE_TILE_SIZE = 1000;
 const FACE_TILE_OVERLAP = 0.28;
 const FACE_TILE_MAX_SIDE = 1536;
 const FACE_TILE_LIMIT = 80;
+const MAX_IMAGE_COUNT = 30;
 
 let mediaPipeDetectorPromise = null;
 let fileDragDepth = 0;
+let imageLoadQueue = Promise.resolve();
 
 function setStatus(message) {
   els.runtimeStatus.textContent = message;
@@ -70,6 +77,16 @@ function setStatus(message) {
 
 function hasImage() {
   return Boolean(state.image);
+}
+
+function getActiveImageItem() {
+  return state.images.find((item) => item.id === state.activeImageId) || null;
+}
+
+function setSelectedId(id) {
+  state.selectedId = id;
+  const item = getActiveImageItem();
+  if (item) item.selectedId = id;
 }
 
 function updateButtons() {
@@ -80,6 +97,8 @@ function updateButtons() {
   els.addFaceButton.disabled = !loaded;
   els.addPlateButton.disabled = !loaded;
   els.deleteButton.disabled = !state.selectedId;
+  els.clearImageButton.disabled = !loaded;
+  els.clearAllButton.disabled = state.images.length === 0;
 }
 
 function updateExportControls() {
@@ -87,6 +106,12 @@ function updateExportControls() {
   state.exportQuality = Number(els.exportQualityInput.value) / 100;
   els.exportQualityValue.textContent = els.exportQualityInput.value;
   els.qualityRow.hidden = state.exportFormat !== "image/jpeg";
+
+  const item = getActiveImageItem();
+  if (item) {
+    item.exportFormat = state.exportFormat;
+    item.exportQuality = state.exportQuality;
+  }
 }
 
 function canUseLocalApi() {
@@ -121,7 +146,7 @@ function createRegion(type, rect) {
   });
 
   state.regions.push(region);
-  state.selectedId = region.id;
+  setSelectedId(region.id);
   renderAll();
   return region;
 }
@@ -142,7 +167,7 @@ function addManualRegion(type) {
 }
 
 function selectRegion(id) {
-  state.selectedId = id;
+  setSelectedId(id);
   renderOverlay();
   renderRegionList();
   updateButtons();
@@ -150,14 +175,14 @@ function selectRegion(id) {
 
 function deleteSelectedRegion() {
   if (!state.selectedId) return;
-  state.regions = state.regions.filter((region) => region.id !== state.selectedId);
-  state.selectedId = state.regions[0]?.id || null;
+  const index = state.regions.findIndex((region) => region.id === state.selectedId);
+  if (index >= 0) state.regions.splice(index, 1);
+  setSelectedId(state.regions[0]?.id || null);
   renderAll();
   setStatus("対象を削除しました");
 }
 
-async function loadImageFile(file) {
-  if (!file) return;
+async function createImageItem(file) {
   if (!file.type.startsWith("image/")) {
     throw new TypeError("画像ファイルではありません");
   }
@@ -173,24 +198,144 @@ async function loadImageFile(file) {
     throw error;
   }
 
-  if (state.objectUrl) URL.revokeObjectURL(state.objectUrl);
-  state.objectUrl = url;
-  state.image = image;
-  state.sourceName = file.name.replace(/\.[^.]+$/, "") || "image";
-  state.sourceType = file.type || "";
-  state.regions = [];
-  state.selectedId = null;
-  els.exportFormatInput.value = state.sourceType === "image/png" ? "image/png" : "image/jpeg";
+  return {
+    id: nextId("image"),
+    fileName: file.name || "image",
+    sourceName: file.name.replace(/\.[^.]+$/, "") || "image",
+    sourceType: file.type || "",
+    objectUrl: url,
+    image,
+    regions: [],
+    selectedId: null,
+    exportFormat: file.type === "image/png" ? "image/png" : "image/jpeg",
+    exportQuality: state.exportQuality,
+  };
+}
+
+function setActiveImageStatus(prefix = "") {
+  const item = getActiveImageItem();
+  if (!item) return;
+  const index = state.images.indexOf(item) + 1;
+  const detail = `${index}/${state.images.length}・${item.image.naturalWidth} x ${item.image.naturalHeight}px`;
+  setStatus(prefix ? `${prefix}・${detail}` : detail);
+}
+
+function activateImage(id, statusPrefix = "") {
+  const item = state.images.find((candidate) => candidate.id === id);
+  if (!item) return;
+  stopDrag();
+
+  state.activeImageId = item.id;
+  state.image = item.image;
+  state.sourceName = item.sourceName;
+  state.sourceType = item.sourceType;
+  state.regions = item.regions;
+  state.selectedId = item.selectedId;
+
+  els.exportFormatInput.value = item.exportFormat;
+  els.exportQualityInput.value = Math.round(item.exportQuality * 100);
   updateExportControls();
 
-  els.imageCanvas.width = image.naturalWidth;
-  els.imageCanvas.height = image.naturalHeight;
+  els.imageCanvas.width = item.image.naturalWidth;
+  els.imageCanvas.height = item.image.naturalHeight;
   els.emptyState.hidden = true;
   els.stage.hidden = false;
 
   renderAll();
-  updateButtons();
-  setStatus(`${image.naturalWidth} x ${image.naturalHeight}px`);
+  setActiveImageStatus(statusPrefix);
+}
+
+function resetActiveImage() {
+  stopDrag();
+  state.activeImageId = null;
+  state.image = null;
+  state.sourceName = "image";
+  state.sourceType = "";
+  state.regions = [];
+  state.selectedId = null;
+
+  els.imageCanvas.width = 0;
+  els.imageCanvas.height = 0;
+  els.emptyState.hidden = false;
+  els.stage.hidden = true;
+  renderAll();
+  setStatus("画像を選択してください");
+}
+
+async function addImageFiles(files) {
+  const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+  const remaining = Math.max(0, MAX_IMAGE_COUNT - state.images.length);
+  const acceptedFiles = imageFiles.slice(0, remaining);
+
+  if (!acceptedFiles.length) {
+    setStatus(remaining ? "画像ファイルを選択してください" : `画像は最大${MAX_IMAGE_COUNT}枚です`);
+    return;
+  }
+
+  setStatus(`${acceptedFiles.length}枚の画像を読み込み中...`);
+  const addedItems = [];
+  let failedCount = files.length - imageFiles.length + Math.max(0, imageFiles.length - remaining);
+
+  for (const file of acceptedFiles) {
+    try {
+      const item = await createImageItem(file);
+      state.images.push(item);
+      addedItems.push(item);
+    } catch (error) {
+      console.error(error);
+      failedCount += 1;
+    }
+  }
+
+  if (!addedItems.length) {
+    setStatus("画像を読み込めませんでした");
+    renderAll();
+    return;
+  }
+
+  const prefix = failedCount
+    ? `${addedItems.length}枚追加、${failedCount}枚をスキップ`
+    : `${addedItems.length}枚追加`;
+  activateImage(addedItems[0].id, prefix);
+}
+
+function queueImageFiles(files) {
+  imageLoadQueue = imageLoadQueue.then(() => addImageFiles(files)).catch((error) => {
+    console.error(error);
+    setStatus("画像を読み込めませんでした");
+  });
+}
+
+function removeImage(id) {
+  const index = state.images.findIndex((item) => item.id === id);
+  if (index < 0) return;
+
+  const [removed] = state.images.splice(index, 1);
+  URL.revokeObjectURL(removed.objectUrl);
+
+  if (removed.id !== state.activeImageId) {
+    renderImageList();
+    updateButtons();
+    setActiveImageStatus("画像を削除しました");
+    return;
+  }
+
+  const nextItem = state.images[Math.min(index, state.images.length - 1)];
+  if (nextItem) {
+    activateImage(nextItem.id, "画像を削除しました");
+  } else {
+    resetActiveImage();
+  }
+}
+
+function clearAllImages() {
+  if (!state.images.length) return;
+  if (state.images.length > 1 && !window.confirm(`${state.images.length}枚の画像をすべてクリアしますか？`)) {
+    return;
+  }
+  for (const item of state.images) URL.revokeObjectURL(item.objectUrl);
+  state.images = [];
+  resetActiveImage();
 }
 
 function isFileDrag(event) {
@@ -208,21 +353,7 @@ function resetFileDrag() {
 }
 
 function handleDroppedFiles(files) {
-  if (files.length !== 1) {
-    setStatus("画像は1枚ずつドロップしてください");
-    return;
-  }
-
-  const [file] = files;
-  if (!file.type.startsWith("image/")) {
-    setStatus("画像ファイルをドロップしてください");
-    return;
-  }
-
-  loadImageFile(file).catch((error) => {
-    console.error(error);
-    setStatus("画像を読み込めませんでした");
-  });
+  queueImageFiles(files);
 }
 
 function drawImageWithBlur(targetContext, preview, backgroundColor = null) {
@@ -299,6 +430,49 @@ function renderOverlay() {
   els.overlay.appendChild(fragment);
 }
 
+function renderImageList() {
+  els.imageList.replaceChildren();
+  els.imageCount.textContent = state.images.length;
+
+  for (const item of state.images) {
+    const listItem = document.createElement("li");
+    if (item.id === state.activeImageId) listItem.classList.add("selected");
+
+    const selectButton = document.createElement("button");
+    selectButton.type = "button";
+    selectButton.className = "image-select";
+    selectButton.setAttribute("aria-pressed", String(item.id === state.activeImageId));
+
+    const thumbnail = document.createElement("img");
+    thumbnail.src = item.objectUrl;
+    thumbnail.alt = "";
+
+    const details = document.createElement("span");
+    details.className = "image-details";
+
+    const name = document.createElement("strong");
+    name.textContent = item.fileName;
+
+    const meta = document.createElement("span");
+    meta.textContent = `${item.image.naturalWidth} x ${item.image.naturalHeight}・${item.regions.length}件`;
+
+    details.append(name, meta);
+    selectButton.append(thumbnail, details);
+    selectButton.addEventListener("click", () => activateImage(item.id));
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "image-remove danger";
+    removeButton.textContent = "×";
+    removeButton.title = `${item.fileName}をクリア`;
+    removeButton.setAttribute("aria-label", `${item.fileName}をクリア`);
+    removeButton.addEventListener("click", () => removeImage(item.id));
+
+    listItem.append(selectButton, removeButton);
+    els.imageList.appendChild(listItem);
+  }
+}
+
 function renderRegionList() {
   els.regionList.replaceChildren();
 
@@ -325,6 +499,7 @@ function renderRegionList() {
 function renderAll() {
   renderCanvas();
   renderOverlay();
+  renderImageList();
   renderRegionList();
   updateButtons();
 }
@@ -802,12 +977,12 @@ function exportImage() {
 }
 
 els.fileInput.addEventListener("change", (event) => {
-  loadImageFile(event.target.files[0]).catch((error) => {
-    console.error(error);
-    setStatus("画像を読み込めませんでした");
-  });
+  queueImageFiles(Array.from(event.target.files || []));
   event.target.value = "";
 });
+
+els.clearImageButton.addEventListener("click", () => removeImage(state.activeImageId));
+els.clearAllButton.addEventListener("click", clearAllImages);
 
 els.stagePanel.addEventListener("dragenter", (event) => {
   if (!isFileDrag(event)) return;
@@ -847,6 +1022,10 @@ window.addEventListener("drop", (event) => {
 
 window.addEventListener("dragleave", (event) => {
   if (!event.relatedTarget) resetFileDrag();
+});
+
+window.addEventListener("beforeunload", () => {
+  for (const item of state.images) URL.revokeObjectURL(item.objectUrl);
 });
 
 els.detectFacesButton.addEventListener("click", detectFaces);
