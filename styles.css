@@ -279,15 +279,42 @@ button.danger:disabled,
   overflow: hidden;
 }
 
+.stage-panel.is-dragging {
+  background: #e8f4f2;
+}
+
 .empty-state {
   display: grid;
   place-items: center;
+  align-content: center;
+  gap: 8px;
   width: min(520px, 100%);
   min-height: 220px;
   border: 1px dashed #aab3bc;
   border-radius: 8px;
   color: var(--muted);
   background: rgba(255, 255, 255, 0.62);
+}
+
+.empty-state span {
+  font-size: 12px;
+}
+
+.drop-indicator {
+  position: absolute;
+  inset: 20px;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  border-radius: 8px;
+  color: var(--accent-strong);
+  background: rgba(255, 255, 255, 0.94);
+  pointer-events: none;
+}
+
+.drop-indicator[hidden] {
+  display: none;
 }
 
 .stage {

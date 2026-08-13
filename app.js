@@ -17,7 +17,9 @@ const els = {
   qualityRow: document.getElementById("qualityRow"),
   previewToggle: document.getElementById("previewToggle"),
   regionList: document.getElementById("regionList"),
+  stagePanel: document.getElementById("stagePanel"),
   emptyState: document.getElementById("emptyState"),
+  dropIndicator: document.getElementById("dropIndicator"),
   stage: document.getElementById("stage"),
   imageCanvas: document.getElementById("imageCanvas"),
   overlay: document.getElementById("overlay"),
@@ -60,6 +62,7 @@ const FACE_TILE_MAX_SIDE = 1536;
 const FACE_TILE_LIMIT = 80;
 
 let mediaPipeDetectorPromise = null;
+let fileDragDepth = 0;
 
 function setStatus(message) {
   els.runtimeStatus.textContent = message;
@@ -155,14 +158,22 @@ function deleteSelectedRegion() {
 
 async function loadImageFile(file) {
   if (!file) return;
-  if (state.objectUrl) URL.revokeObjectURL(state.objectUrl);
+  if (!file.type.startsWith("image/")) {
+    throw new TypeError("画像ファイルではありません");
+  }
 
   const url = URL.createObjectURL(file);
   const image = new Image();
   image.decoding = "async";
   image.src = url;
-  await image.decode();
+  try {
+    await image.decode();
+  } catch (error) {
+    URL.revokeObjectURL(url);
+    throw error;
+  }
 
+  if (state.objectUrl) URL.revokeObjectURL(state.objectUrl);
   state.objectUrl = url;
   state.image = image;
   state.sourceName = file.name.replace(/\.[^.]+$/, "") || "image";
@@ -180,6 +191,38 @@ async function loadImageFile(file) {
   renderAll();
   updateButtons();
   setStatus(`${image.naturalWidth} x ${image.naturalHeight}px`);
+}
+
+function isFileDrag(event) {
+  return Array.from(event.dataTransfer?.types || []).includes("Files");
+}
+
+function setDropIndicator(visible) {
+  els.stagePanel.classList.toggle("is-dragging", visible);
+  els.dropIndicator.hidden = !visible;
+}
+
+function resetFileDrag() {
+  fileDragDepth = 0;
+  setDropIndicator(false);
+}
+
+function handleDroppedFiles(files) {
+  if (files.length !== 1) {
+    setStatus("画像は1枚ずつドロップしてください");
+    return;
+  }
+
+  const [file] = files;
+  if (!file.type.startsWith("image/")) {
+    setStatus("画像ファイルをドロップしてください");
+    return;
+  }
+
+  loadImageFile(file).catch((error) => {
+    console.error(error);
+    setStatus("画像を読み込めませんでした");
+  });
 }
 
 function drawImageWithBlur(targetContext, preview, backgroundColor = null) {
@@ -763,6 +806,47 @@ els.fileInput.addEventListener("change", (event) => {
     console.error(error);
     setStatus("画像を読み込めませんでした");
   });
+  event.target.value = "";
+});
+
+els.stagePanel.addEventListener("dragenter", (event) => {
+  if (!isFileDrag(event)) return;
+  event.preventDefault();
+  fileDragDepth += 1;
+  setDropIndicator(true);
+});
+
+els.stagePanel.addEventListener("dragover", (event) => {
+  if (!isFileDrag(event)) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+});
+
+els.stagePanel.addEventListener("dragleave", (event) => {
+  if (!fileDragDepth) return;
+  fileDragDepth = Math.max(0, fileDragDepth - 1);
+  if (!fileDragDepth) setDropIndicator(false);
+});
+
+els.stagePanel.addEventListener("drop", (event) => {
+  if (!isFileDrag(event)) return;
+  event.preventDefault();
+  const files = Array.from(event.dataTransfer.files || []);
+  resetFileDrag();
+  handleDroppedFiles(files);
+});
+
+window.addEventListener("dragover", (event) => {
+  if (isFileDrag(event)) event.preventDefault();
+});
+
+window.addEventListener("drop", (event) => {
+  if (isFileDrag(event)) event.preventDefault();
+  resetFileDrag();
+});
+
+window.addEventListener("dragleave", (event) => {
+  if (!event.relatedTarget) resetFileDrag();
 });
 
 els.detectFacesButton.addEventListener("click", detectFaces);

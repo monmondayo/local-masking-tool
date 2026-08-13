@@ -76,9 +76,13 @@
           </div>
         </aside>
 
-        <section class="stage-panel" aria-label="編集エリア">
+        <section id="stagePanel" class="stage-panel" aria-label="編集エリア">
           <div id="emptyState" class="empty-state">
-            <strong>画像未選択</strong>
+            <strong>画像をここにドロップ</strong>
+            <span>JPEG / PNG / WebP</span>
+          </div>
+          <div id="dropIndicator" class="drop-indicator" role="status" hidden>
+            <strong>画像をドロップして開く</strong>
           </div>
           <div id="stage" class="stage" hidden>
             <canvas id="imageCanvas"></canvas>
